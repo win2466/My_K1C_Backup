@@ -29,6 +29,7 @@ force_logins = True
 cors_domains = 
 	*.lan
 	*.local
+	*.ts.net
 	*://localhost
 	*://localhost:*
 	*://my.mainsail.xyz
@@ -39,15 +40,13 @@ cors_domains =
 	http://192.168.1.251:4409
 	https://192.168.1.251:4409
 trusted_clients = 
-	10.0.0.0/8
-	127.0.0.0/8
-	169.254.0.0/16
-	172.16.0.0/12
-	192.168.1.0/24
-	192.168.1.15
-	192.168.1.251
-	FE80::/10
+	127.0.0.1/32
 	::1/128
+	FE80::/10
+	192.168.1.15/32
+	192.168.1.251/32
+	100.64.0.0/10
+	fd7a:115c:a1e0::/48
 
 [octoprint_compat]
 
@@ -81,7 +80,7 @@ aspect_ratio = 4:3
 
 [update_manager mainsail]
 type = web
-channel = beta
+channel = stable
 repo = mainsail-crew/mainsail
 path = /usr/data/mainsail
 
