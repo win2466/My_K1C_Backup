@@ -1,0 +1,19 @@
+# =============================================================================
+# BED MESH - Optimized for speed. Adaptive behavior comes from OrcaSlicer's
+# MESH_MIN / MESH_MAX parameters, not from Klipper's adaptive_margin option.
+#
+# NOTE: Creality's Klipper firmware does NOT support:
+#   - adaptive_margin (in [bed_mesh])
+#   - ADAPTIVE=1 or ADAPTIVE_MARGIN= (in BED_MESH_CALIBRATE)
+# OrcaSlicer handles the margin internally via adaptive_bed_mesh_margin.
+# =============================================================================
+[bed_mesh]
+speed: 200
+horizontal_move_z: 5
+mesh_min: 5,5
+mesh_max: 215,215
+probe_count: 5,5
+fade_start: 5.0
+fade_end: 50.0
+algorithm: bicubic
+bicubic_tension: 0.2
