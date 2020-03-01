@@ -1,0 +1,278 @@
+########################################
+# M600 Support - Custom Manual Color Change
+# K1C / OrcaSlicer 2.4.2
+#
+# Fixes applied vs. earlier versions:
+#   1. RESUME: CLEAR_PAUSE is called AFTER RESUME_BASE so Klipper
+#      restores the saved toolhead XY position.
+#   2. E-only moves use M83/M82 instead of G91/G90.
+#   3. RESUME closes the Mainsail/Fluidd prompt explicitly.
+#   4. IGNORE now performs a full safe escape: verifies filament
+#      is present, reloads it, re-parks at the normal pause
+#      position, and clears m600_state. Print remains paused.
+#   5. Hotend-temp fallback: _UNLOAD/_LOAD/_PURGE use
+#      default_extruder_temp if hotend_temp is 0 or < 170C,
+#      preventing M109 S0 stalls on runout-triggered M600.
+#   6. Prompt hardened for Moonraker 0.9+: one action: per
+#      RESPOND, pipe-separated label|gcode|style, hotend
+#      temperature readout included.
+#
+# Do NOT use {# ... #} Jinja comments inside gcode: blocks.
+########################################
+
+[gcode_macro _M600_IDLE_TIMEOUT_ACTION]
+gcode:
+  {% if printer["gcode_macro M600"].m600_state == 1 %}
+    RESPOND TYPE=command MSG="Idle during filament change. Turning off heaters."
+    M104 S0
+    M140 S0
+  {% else %}
+    TURN_OFF_HEATERS
+    M84
+  {% endif %}
+
+[idle_timeout]
+gcode:
+  _M600_IDLE_TIMEOUT_ACTION
+timeout: 1800
+
+[filament_switch_sensor filament_sensor]
+pause_on_runout: false
+switch_pin: !PC15
+runout_gcode:
+  M600
+
+[gcode_macro _UNLOAD_FILAMENT]
+gcode:
+  RESTORE_E_CURRENT
+  {% set t = printer['gcode_macro PRINTER_PARAM'].hotend_temp|int %}
+  {% if t < 170 %}
+    {% set t = printer.custom_macro.default_extruder_temp|int %}
+  {% endif %}
+  M109 S{t}
+  RESPOND TYPE=command MSG="Unloading filament for color change..."
+  M83
+  G1 E20 F300        ; small prime to clear melt zone
+  G1 E-80 F1800      ; strong retract to pull filament free
+  M400
+  SET_E_MIN_CURRENT
+
+[gcode_macro _LOAD_FILAMENT]
+gcode:
+  RESTORE_E_CURRENT
+  {% set t = printer['gcode_macro PRINTER_PARAM'].hotend_temp|int %}
+  {% if t < 170 %}
+    {% set t = printer.custom_macro.default_extruder_temp|int %}
+  {% endif %}
+  M109 S{t}
+  RESPOND TYPE=command MSG="Loading filament..."
+  M83
+  G1 E100 F180
+  M400
+  SET_E_MIN_CURRENT
+
+[gcode_macro _PURGE_MORE]
+gcode:
+  RESTORE_E_CURRENT
+  {% set t = printer['gcode_macro PRINTER_PARAM'].hotend_temp|int %}
+  {% if t < 170 %}
+    {% set t = printer.custom_macro.default_extruder_temp|int %}
+  {% endif %}
+  M109 S{t}
+  RESPOND TYPE=command MSG="Purging filament..."
+  M83
+  G1 E10 F180
+  M400
+  SET_E_MIN_CURRENT
+
+# -----------------------------------------------------------------------------
+# IGNORE: escape hatch when the user does not actually want a color change.
+# Safety guards:
+#   1. Refuses if the runout sensor reports no filament (prevents
+#      "resume prints air").
+#   2. Warms the hotend if it is too cold to reload safely.
+#   3. Reloads filament, re-parks, clears m600_state, closes prompt.
+# The print itself remains paused; user must still press Resume.
+# -----------------------------------------------------------------------------
+[gcode_macro _M600_IGNORE]
+description: Ignore the M600 request and restore print-ready paused state
+gcode:
+  ; Guard 1: refuse if no filament is detected by the runout sensor.
+  {% if not printer["filament_switch_sensor filament_sensor"].filament_detected %}
+    RESPOND TYPE=command MSG="Cannot ignore: filament sensor reports no filament. Load filament first, then IGNORE or RESUME."
+    M118 Cannot IGNORE - load filament first
+  {% else %}
+    ; Guard 2: refuse if the extruder is too cold to reload safely.
+    {% set reload_temp = printer['gcode_macro PRINTER_PARAM'].hotend_temp|int %}
+    {% if reload_temp < 170 %}
+      {% set reload_temp = printer.custom_macro.default_extruder_temp|int %}
+    {% endif %}
+    {% if printer.extruder.temperature|int < (reload_temp - 20) %}
+      RESPOND TYPE=command MSG="Waiting for hotend to reach {reload_temp}C before reload..."
+      M109 S{reload_temp}
+    {% endif %}
+
+    ; Reload filament (reverses M600's unload)
+    _LOAD_FILAMENT
+
+    ; Restore idle timeout to the normal print value
+    SET_IDLE_TIMEOUT TIMEOUT=1800
+
+    ; Clear M600 state so a subsequent RESUME takes the normal path
+    SET_GCODE_VARIABLE MACRO=M600 VARIABLE=m600_state VALUE=0
+
+    ; Re-park at the normal pause position
+    {% set y_park = printer.toolhead.axis_maximum.y/2 %}
+    {% set x_park = printer.toolhead.axis_maximum.x|float - 10.0 %}
+    G90
+    G1 X{x_park} Y{y_park} F30000
+
+    RESPOND TYPE=command MSG="Filament change ignored and filament reloaded. Print remains paused - press Resume to continue."
+    RESPOND TYPE=command MSG="action:prompt_end"
+  {% endif %}
+
+# -----------------------------------------------------------------------------
+# M600 - Filament change.
+# Pauses the print, unloads, parks, shows a Mainsail/Fluidd prompt with
+# UNLOAD / LOAD / PURGE / CANCEL / IGNORE / RESUME actions.
+# -----------------------------------------------------------------------------
+[gcode_macro M600]
+description: Filament Change
+variable_m600_state: 0
+variable_fan0_speed: 0
+gcode:
+  {% set E = printer["gcode_macro PAUSE"].extrude|float %}
+  {% set y_park = printer.toolhead.axis_minimum.y|float + 5.0 %}
+  {% set x_park = printer.toolhead.axis_maximum.x|float - 10.0 %}
+  {% set max_z = printer["gcode_macro PRINTER_PARAM"].max_z_position|float %}
+  {% set act_z = printer.toolhead.position.z|float %}
+  {% set z_safe = 0.0 %}
+  {% if act_z < 48.0 %}
+    {% set z_safe = 50.0 - act_z %}
+  {% elif act_z < (max_z - 2.0) %}
+    {% set z_safe = 2.0 %}
+  {% elif act_z < max_z %}
+    {% set z_safe = max_z - act_z %}
+  {% endif %}
+  {action_respond_info("z_safe = %s"% (z_safe))}
+
+  PAUSE_BASE
+
+  SET_GCODE_VARIABLE MACRO=M600 VARIABLE=m600_state VALUE=1
+  SET_GCODE_VARIABLE MACRO=PRINTER_PARAM VARIABLE=hotend_temp VALUE={printer.extruder.target}
+  SET_GCODE_VARIABLE MACRO=PRINTER_PARAM VARIABLE=z_safe_pause VALUE={z_safe|float}
+  RESPOND TYPE=command MSG="Print paused for filament change!"
+
+  {% if "xyz" in printer.toolhead.homed_axes %}
+    {% if printer.extruder.can_extrude|lower == 'true' %}
+      M83
+      G1 E-1.0 F180
+      G1 E-{E} F4000
+      M82
+    {% else %}
+      RESPOND TYPE=command MSG="Extruder not hot enough!"
+    {% endif %}
+    G91
+    G1 Z{z_safe} F600
+    M400
+    G90
+    G1 X{x_park} Y{y_park} F30000
+  {% endif %}
+
+  _UNLOAD_FILAMENT
+
+  SET_GCODE_VARIABLE MACRO=PRINTER_PARAM VARIABLE=fan2_speed VALUE={printer['output_pin fan2'].value}
+  SET_GCODE_VARIABLE MACRO=M600 VARIABLE=fan0_speed VALUE={printer['output_pin fan0'].value}
+  M106 P0 S0
+  M106 P2 S0
+  SET_IDLE_TIMEOUT TIMEOUT=900
+  SET_E_MIN_CURRENT
+
+  ; ------------------------------------------------------------
+  ; Mainsail / Fluidd / GuppyScreen prompt (Moonraker 0.9+)
+  ; One action directive per RESPOND; pipe '|' separates
+  ; label|gcode|style. No Jinja comments inside gcode: block.
+  ; ------------------------------------------------------------
+  RESPOND TYPE=command MSG="action:prompt_begin Filament change detected"
+  RESPOND TYPE=command MSG="action:prompt_text Filament change required. Replace filament, LOAD it, then press RESUME."
+  RESPOND TYPE=command MSG="action:prompt_text Current hotend: {printer.extruder.temperature|round(1)}C / target {printer.extruder.target|round(0)}C"
+  RESPOND TYPE=command MSG="action:prompt_button UNLOAD FILAMENT|_UNLOAD_FILAMENT|secondary"
+  RESPOND TYPE=command MSG="action:prompt_button LOAD FILAMENT|_LOAD_FILAMENT|secondary"
+  RESPOND TYPE=command MSG="action:prompt_button PURGE MORE FILAMENT|_PURGE_MORE|secondary"
+  RESPOND TYPE=command MSG="action:prompt_footer_button CANCEL PRINT|CANCEL_PRINT|error"
+  RESPOND TYPE=command MSG="action:prompt_footer_button IGNORE|_M600_IGNORE|warning"
+  RESPOND TYPE=command MSG="action:prompt_footer_button RESUME|RESUME|primary"
+  RESPOND TYPE=command MSG="action:prompt_show"
+
+# -----------------------------------------------------------------------------
+# RESUME - handles both normal pause and M600 return.
+# CRITICAL ORDER: RESUME_BASE must run BEFORE CLEAR_PAUSE so Klipper
+# restores the saved toolhead position at the correct moment.
+# -----------------------------------------------------------------------------
+[gcode_macro RESUME]
+description: Resume the current print
+rename_existing: RESUME_BASE
+gcode:
+  RESTORE_E_CURRENT
+
+  {% if printer['gcode_macro PRINTER_PARAM'].hotend_temp|int != 0 %}
+    {% if printer['gcode_macro PRINTER_PARAM'].hotend_temp|int > printer.extruder.temperature %}
+      RESPOND TYPE=command MSG="Starting hotend heating..."
+      M109 S{printer['gcode_macro PRINTER_PARAM'].hotend_temp|int}
+    {% else %}
+      RESPOND TYPE=command MSG="Starting hotend heating..."
+      M104 S{printer['gcode_macro PRINTER_PARAM'].hotend_temp|int}
+    {% endif %}
+    SET_GCODE_VARIABLE MACRO=PRINTER_PARAM VARIABLE=hotend_temp VALUE=0
+  {% endif %}
+
+  {% if printer['gcode_macro PRINTER_PARAM'].fan2_speed > 0 %}
+    {% set s_value = (printer['gcode_macro PRINTER_PARAM'].fan2_speed * 255 - printer['gcode_macro PRINTER_PARAM'].fan2_min) * 255 / (255 - printer['gcode_macro PRINTER_PARAM'].fan2_min)|float %}
+    M106 P2 S{s_value}
+  {% endif %}
+
+  {% if printer['gcode_macro M600'].m600_state != 1 %}
+    {% set z_resume_move = printer['gcode_macro PRINTER_PARAM'].z_safe_pause|int %}
+    {% if z_resume_move > 2 %}
+      {% set z_resume_move = z_resume_move - 2 %}
+      G91
+      G1 Z-{z_resume_move} F600
+      M400
+      G90
+    {% endif %}
+  {% endif %}
+
+  {% set E = printer["gcode_macro PAUSE"].extrude|float + 1.0 %}
+
+  {% if 'VELOCITY' in params|upper %}
+    {% set get_params = ('VELOCITY=' + params.VELOCITY) %}
+  {% else %}
+    {% set get_params = "" %}
+  {% endif %}
+
+  {% if printer["gcode_macro M600"].m600_state == 1 %}
+    ; coming back from M600 filament change
+    {% if printer['gcode_macro M600'].fan0_speed > 0 %}
+      {% set s_value = (printer['gcode_macro M600'].fan0_speed * 255 - printer['gcode_macro PRINTER_PARAM'].fan0_min) * 255 / (255 - printer['gcode_macro PRINTER_PARAM'].fan0_min)|float %}
+      M106 P0 S{s_value}
+      SET_GCODE_VARIABLE MACRO=M600 VARIABLE=fan0_speed VALUE=0
+    {% endif %}
+    SET_GCODE_VARIABLE MACRO=M600 VARIABLE=m600_state VALUE=0
+    SET_IDLE_TIMEOUT TIMEOUT=1800
+    RESPOND TYPE=command MSG="action:prompt_end"
+  {% else %}
+    ; normal pause resume
+    {% if printer.extruder.can_extrude|lower == 'true' %}
+      M83
+      G1 E{E} F2100
+      M400
+      M82
+    {% else %}
+      RESPOND TYPE=command MSG="Extruder not hot enough!"
+    {% endif %}
+  {% endif %}
+
+  RESPOND TYPE=command MSG="Resuming printing..."
+  ; CRITICAL ORDER: RESUME_BASE must run BEFORE CLEAR_PAUSE
+  RESUME_BASE {get_params}
+  CLEAR_PAUSE
