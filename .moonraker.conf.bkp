@@ -1,0 +1,87 @@
+[server]
+host = 0.0.0.0
+port = 7125
+klippy_uds_address = /tmp/klippy_uds
+max_upload_size = 2048
+
+[file_manager]
+queue_gcode_uploads = False
+enable_object_processing = True
+
+[database]
+
+[data_store]
+temperature_store_size = 600
+gcode_store_size = 1000
+
+[machine]
+provider = supervisord_cli
+validate_service = False
+validate_config = False
+
+[job_queue]
+load_on_startup = True
+automatic_transition = True
+job_transition_delay = 0.5
+
+[authorization]
+force_logins = True
+cors_domains = 
+	*.lan
+	*.local
+	*://localhost
+	*://localhost:*
+	*://my.mainsail.xyz
+	*://app.fluidd.xyz
+	http://192.168.1.15:8123
+	https://192.168.1.15:8123
+	http://homeassistant.local:8123
+	http://192.168.1.251:4409
+	https://192.168.1.251:4409
+trusted_clients = 
+	10.0.0.0/8
+	127.0.0.0/8
+	169.254.0.0/16
+	172.16.0.0/12
+	192.168.1.0/24
+	192.168.1.15
+	192.168.1.251
+	FE80::/10
+	::1/128
+
+[octoprint_compat]
+
+[history]
+
+[update_manager]
+enable_auto_refresh = True
+refresh_interval = 168
+enable_system_updates = False
+
+[update_manager Creality-Helper-Script]
+type = git_repo
+channel = dev
+path = /usr/data/helper-script
+origin = https://github.com/Guilouz/Creality-Helper-Script.git
+primary_branch = main
+managed_services = klipper
+
+[webcam Camera]
+location = printer
+enabled = True
+service = mjpegstreamer
+target_fps = 15
+target_fps_idle = 5
+stream_url = http://192.168.1.251:8080/?action=stream
+snapshot_url = http://192.168.1.251:8080/?action=snapshot
+flip_horizontal = False
+flip_vertical = False
+rotation = 0
+aspect_ratio = 4:3
+
+[update_manager mainsail]
+type = web
+channel = beta
+repo = mainsail-crew/mainsail
+path = /usr/data/mainsail
+
