@@ -3,3 +3,13 @@
 # which inserts M191 automatically and cannot be easily disabled), you can
 # define a macro that safely ignores or redirects the command.
 ######################################################################################
+
+[gcode_macro M191]
+description: Chamber temperature wait (no active heater on K1C)
+gcode:
+  {% set s = params.S|float %}
+  {% if s > 0 %}
+    RESPOND TYPE=command MSG="M191 received: chamber target {s}C. No active chamber heater on this printer."
+  {% else %}
+    RESPOND TYPE=command MSG="M191 received: chamber heating cancelled."
+  {% endif %}
