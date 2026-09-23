@@ -1,0 +1,5 @@
+#####################################################################################
+# If you want to keep the slicer setting enabled (or if you are using CrealityPrint,
+# which inserts M191 automatically and cannot be easily disabled), you can
+# define a macro that safely ignores or redirects the command.
+######################################################################################
