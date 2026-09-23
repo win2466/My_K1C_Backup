@@ -1,0 +1,215 @@
+================================================================================
+  K1C Z-OFFSET CALIBRATION WORKFLOW  (GuppyScreen + OrcaSlicer + Klipper)
+================================================================================
+
+This printer uses TWO separate Z offsets that must NOT be confused:
+
+  1. PROBE Z-OFFSET  ([prtouch_v2] z_offset)
+     The physical distance between the probe trigger point and the nozzle
+     tip. Calibrated ONCE with PROBE_CALIBRATE and stored by Klipper in the
+     SAVE_CONFIG block at the bottom of printer.cfg. Changing this affects
+     the entire coordinate system - do not touch it for first-layer tuning.
+
+  2. GCODE Z-OFFSET  (Helper-Script/variables.cfg)
+     A fine-tuning offset applied on top of the probe offset. Persisted by
+     zoffset-guppy.cfg and adjustable on the fly from GuppyScreen. THIS is
+     what you tune for first-layer perfection.
+
+Golden rule:
+  Calibrate the PROBE Z-OFFSET first (rarely, one time only).
+  Tune the GCODE Z-OFFSET for every filament / build plate combo.
+
+--------------------------------------------------------------------------------
+STEP 1 - CALIBRATE PROBE Z-OFFSET (one time, or after nozzle/probe service)
+--------------------------------------------------------------------------------
+
+  1. Home the printer:
+       G28
+
+  2. Heat the bed to your typical printing temperature
+     (e.g. 60 C for PLA, 100 C for ABS).
+     Heat the nozzle to 150 C to prevent oozing during probing.
+
+  3. Ensure the nozzle and bed are clean. Remove any filament blobs.
+
+  4. Run:
+       PROBE_CALIBRATE
+
+  5. Klipper will home Z and then prompt you to adjust the nozzle using
+     the paper test or a feeler gauge:
+       - Use TESTZ Z=-0.05 to lower the nozzle
+       - Use TESTZ Z=+0.05 to raise the nozzle
+       - Repeat until the paper drags lightly with consistent friction.
+
+  6. Accept the value:
+       ACCEPT
+
+  7. Save to printer.cfg:
+       SAVE_CONFIG
+     Klipper restarts. Look for the new [prtouch_v2] z_offset value in the
+     SAVE_CONFIG block at the bottom of printer.cfg.
+
+  ! IMPORTANT: Do NOT use SET_GCODE_OFFSET for this step. The probe offset
+    is the physical reference; mixing the two will cause the
+    "inconsistent z-offset" error during BED_MESH processing.
+
+--------------------------------------------------------------------------------
+STEP 2 - TUNE GCODE Z-OFFSET FOR A FILAMENT / PLATE (per profile)
+--------------------------------------------------------------------------------
+
+  1. Load a small first-layer test print (a 60x60 patch with 0.2 mm layer
+     height works well). Or use the printer's built-in _CUSTOM_PURGE_LINE
+     and observe the purge line.
+
+  2. Start the print. During the first layer:
+
+     Option A - GuppyScreen (preferred):
+       - Open the Z-Offset tuning menu during the print.
+       - Adjust in 0.01 mm increments until the first layer is perfect:
+           * Positive value  -> nozzle further from bed (layer too thin)
+           * Negative value  -> nozzle closer to bed    (layer squashed)
+       - GuppyScreen calls SET_GCODE_OFFSET Z=<value> automatically.
+       - The custom macro in zoffset-guppy.cfg persists the value to
+         Helper-Script/variables.cfg.
+
+     Option B - Console:
+       SET_GCODE_OFFSET Z=-0.05 MOVE=0
+       Use MOVE=0 to avoid an immediate toolhead jump. The value is saved
+       automatically (suppression flag is clear outside START_PRINT).
+
+  3. Continue tuning until first-layer lines are:
+       - Slightly squashed, no gaps between lines
+       - Smooth to the touch, no ridges
+       - Uniform across the plate (this is what adaptive mesh gives you)
+
+  4. Once satisfied, the offset is already saved. No SAVE_CONFIG needed.
+
+--------------------------------------------------------------------------------
+STEP 3 - VERIFY PERSISTENCE
+--------------------------------------------------------------------------------
+
+  1. Restart Klipper (or reboot the printer).
+
+  2. Watch the console during startup. You should see:
+       Loaded Z-Offset from variables.cfg: <your value>mm
+     This comes from the LOAD_GCODE_OFFSETS delayed_gcode.
+
+  3. To confirm the live value at any time, run:
+       GET_GCODE_OFFSET
+     or check Mainsail / Fluidd / GuppyScreen.
+
+--------------------------------------------------------------------------------
+STEP 4 - MANAGING / RESETTING OFFSETS
+--------------------------------------------------------------------------------
+
+  Clear live offset temporarily (no save, no persist):
+      ZOFFSET_CLEAR
+    Zeroes the live gcode offset and blocks writes to variables.cfg.
+    Used internally by START_PRINT before mesh calibration.
+
+  Restore the saved offset:
+      ZOFFSET_RESTORE
+    Re-applies the value from variables.cfg and re-enables saving.
+
+  Manually re-apply from console or GuppyScreen macro:
+      ZOFFSET_APPLY
+
+  Delete the saved gcode offset permanently:
+    - Edit /usr/data/printer_data/config/Helper-Script/variables.cfg
+    - Set:  zoffset = {'z': 0}
+      or remove the zoffset key entirely.
+    - Restart Klipper.
+
+  Re-calibrate the PROBE offset (rare):
+    Repeat STEP 1. This does NOT affect the saved gcode offset.
+
+--------------------------------------------------------------------------------
+HOW START_PRINT USES BOTH OFFSETS (why it works)
+--------------------------------------------------------------------------------
+
+  1.  START_PRINT is called by OrcaSlicer with adaptive mesh parameters
+      (MESH_MIN, MESH_MAX, PROBE_COUNT) and chamber temp.
+
+  2.  ZOFFSET_CLEAR -> live gcode offset becomes 0, saves suppressed.
+
+  3.  SKEW_PROFILE LOAD=default -> applied while offset is still 0
+      (pure XY shear, independent of Z).
+
+  4.  Homing, nozzle-clean, adaptive bed mesh -> all run at true
+      offset-free height. Probing is accurate, no "inconsistent
+      z-offset" error, no brush tearing.
+
+  5.  ZOFFSET_RESTORE -> saved gcode offset is re-applied.
+
+  6.  _CUSTOM_PURGE_LINE and the print itself -> run with the
+      user-tuned gcode offset active. Perfect first layer.
+
+  This separation is what makes the whole system bulletproof: Creality's
+  internal CX_* macros can call SET_GCODE_OFFSET as much as they want
+  during mesh preparation, because the suppression flag in
+  _ZOFFSET_FLAGS blocks any write to variables.cfg until
+  ZOFFSET_RESTORE runs.
+
+--------------------------------------------------------------------------------
+ORCASLICER SETUP CHECKLIST
+--------------------------------------------------------------------------------
+
+  Printer profile -> machine_start_gcode must include the following tokens
+  (already in the Retro D printer profile you supplied):
+
+    START_PRINT
+      BED_TEMP=[bed_temperature_initial_layer_single]
+      EXTRUDER_TEMP=[nozzle_temperature_initial_layer]
+      FILAMENT_TYPE=[filament_type]
+      MESH_MIN={adaptive_bed_mesh_min[0]},{adaptive_bed_mesh_min[1]}
+      MESH_MAX={adaptive_bed_mesh_max[0]},{adaptive_bed_mesh_max[1]}
+      PROBE_COUNT={bed_mesh_probe_count[0]},{bed_mesh_probe_count[1]}
+      CHAMBER_TEMP=[chamber_temperature]
+
+  In OrcaSlicer -> Printer Settings -> Basic information:
+    - "Adaptive bed mesh" must be ENABLED.
+    - Probe count should match your desired density (e.g. 5,5).
+    - Min/max margins default to 5 mm; you can shrink them for small parts.
+
+  If MESH_MIN / MESH_MAX are missing from the START_PRINT call,
+  START_PRINT automatically falls back to the full-bed mesh via
+  CX_PRINT_LEVELING_CALIBRATION. This is the safety net.
+
+--------------------------------------------------------------------------------
+TROUBLESHOOTING
+--------------------------------------------------------------------------------
+
+  Symptom: "[0.0] inconsistent z-offset" during BED_MESH_CALIBRATE
+  Fix:     Confirm ZOFFSET_CLEAR runs BEFORE BED_MESH_CALIBRATE in
+           START_PRINT. It does in the shipped config.
+
+  Symptom: First layer too high or too low, everywhere
+  Fix:     Tune the GCODE offset (STEP 2). Do NOT touch [prtouch_v2]
+           z_offset.
+
+  Symptom: Offset lost after Klipper restart
+  Fix:     Check that Helper-Script/variables.cfg exists and is writable.
+           Check that [save_variables] filename points at it. Check that
+           LOAD_GCODE_OFFSETS delayed_gcode ran (look for the console
+           message "Z-offset restored: ...mm").
+
+  Symptom: Offset changes by itself during a print
+  Fix:     A macro or a slicer start-gcode is calling SET_GCODE_OFFSET
+           outside START_PRINT without the suppression flag. Audit any
+           custom gcode in OrcaSlicer (filament start, layer change,
+           tool change, etc.). Report if you find one.
+
+  Symptom: GuppyScreen Z-offset controls do nothing
+  Fix:     Make sure [include zoffset-guppy.cfg] is present in printer.cfg
+           and that no other file also redefines SET_GCODE_OFFSET. The
+           old Helper-Script/save-zoffset.cfg MUST remain commented out
+           (it is, in the shipped printer.cfg).
+
+  Symptom: First layer OK in center, off at edges
+  Fix:     This is a MESH problem, not an offset problem. Re-run
+           BED_MESH_CALIBRATE with a denser probe count, or check that
+           the bed is physically trammed (screws, spacers).
+
+================================================================================
+  END OF WORKFLOW
+================================================================================
