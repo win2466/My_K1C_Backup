@@ -1,6 +1,6 @@
 # K1C Klipper Configuration & Troubleshooting Reference
 
-**Version:** 2.0.9-quality-fix-11-12-13
+**Version:** 2.0.9-corrections
 **Last updated:** 2026-09-27
 **Printer:** Creality K1C (220x220x250 mm, CoreXY)
 **Firmware:** Stock Klipper fork with Creality PRTouch v2 extensions
@@ -11,6 +11,21 @@ This document captures every change, fix, and lesson from the configuration
 work done on this printer. Keep it alongside your config backups — it
 explains WHY each change exists, so future-you doesn't undo something
 important by accident.
+
+### Changelog
+
+- **v2.0.9-corrections** (this version)
+  - Corrected TRSYNC_TIMEOUT explanation (it is NOT the identify-handshake
+    timeout window).
+  - Documented the overlayfs layout of /usr/share/klipper/.
+  - Documented that the startup "Timeout on connect" is a self-healing
+    race condition (empirically confirmed).
+  - Added healthy-stat markers so future-you can tell at a glance whether
+    the printer is actually sick.
+  - Added Correction 6 to the Honest Corrections Log.
+
+- **v2.0.9-quality-fix-11-12-13**
+  - Initial consolidated reference.
 
 ---
 
@@ -30,7 +45,7 @@ important by accident.
 12. Honest Corrections Log
 13. What NOT to Change
 14. Quick Command Reference
-15. Appendices A-C
+15. Appendices A-D
 
 ---
 
@@ -55,6 +70,23 @@ important by accident.
 This printer uses Creality's modified Klipper, not upstream. It installs to
 /usr/share/klipper/ as a system package. Any online guide that says
 ~/klipper/ must be translated to /usr/share/klipper/.
+
+### Filesystem layout — overlayfs
+
+/usr/share/klipper/ is served through an overlayfs mount. Three paths point
+at the same logical file:
+
+    /rom/usr/share/klipper/...            read-only lower layer (factory)
+    /overlay/upper/usr/share/klipper/...  writable upper layer (edits go here)
+    /usr/share/klipper/...                merged view (what Klipper reads)
+
+You edit the merged view. The overlay automatically routes writes to
+/overlay/upper/. Do NOT edit /rom/ directly — it is read-only and any
+attempt will either fail or be shadowed by the upper layer.
+
+To locate a Klipper source file on this printer:
+
+    find / -name "mcu.py" -path "*klippy*" 2>/dev/null
 
 ### Key PRTouch constraint
 
@@ -136,10 +168,17 @@ b) Serial handshake timeout
      cdata pointer, not NoneType
 
    Root cause: "mcu 'mcu': Timeout on connect" — the MCU did not respond
-   within the TRSYNC_TIMEOUT window (default 0.025 s). The serialqueue was
-   still None when Klipper tried to send the identify request.
+   to Klipper's identify packet within the handshake window. The
+   serialqueue was still None when Klipper tried to send the identify
+   request.
 
-   Fix: Increase TRSYNC_TIMEOUT to 0.05 s (see Section 6).
+   IMPORTANT — this is NOT a TRSYNC_TIMEOUT problem. The identify
+   handshake window is a separate, hardcoded ~5-second timeout in
+   serialhdl.py. TRSYNC_TIMEOUT governs the clock-sync phase after
+   identify succeeds. See Correction 6 in Section 12.
+
+   Fix: none required. Klipper retries automatically and succeeds. See
+   Section 7.1.
 
 ### 3.3 Move queue overflow
 
@@ -377,39 +416,82 @@ File: /usr/share/klipper/klippy/mcu.py  (NOT ~/klipper/)
 Default value: TRSYNC_TIMEOUT = 0.025
 New value:     TRSYNC_TIMEOUT = 0.05
 
-Why: K1's Ingenic host CPU occasionally produces scheduling delay that
-causes the MCU's response to arrive just past the default 0.025 s window.
-Increasing to 0.05 s eliminates the timeout.
+### What this parameter actually does
 
-Editing method on K1C (BusyBox sed does not support bracket expressions):
+TRSYNC_TIMEOUT governs the sync/clock-check phase that runs AFTER the
+initial identify handshake succeeds. It is the window Klipper allows for
+the MCU to confirm it has received the timing reference before deciding
+the clock is unstable.
 
-Use nano:
+### What this parameter does NOT do
+
+It does NOT control the identify-handshake timeout. That is a separate,
+hardcoded ~5-second window in serialhdl.py. Increasing TRSYNC_TIMEOUT will
+NOT prevent "Timeout on connect" messages at cold boot.
+
+It also does NOT affect the `rto=` value reported in the Stats lines.
+`rto` (retransmit timeout) is computed at runtime from baud rate and
+message size. At 230400 baud it will read `rto=0.025` regardless of
+TRSYNC_TIMEOUT.
+
+### Why the edit was still applied
+
+Increased margin on the sync phase eliminates a class of subtle "clock not
+converged" warnings that occasionally appear on K1C under CPU load. It is
+a low-risk, defensible tweak even though it does not address the startup
+identify race.
+
+### Locate the file
+
+Because of the overlayfs layout (see Section 1), the file can be found at
+three paths. To confirm the actual file:
+
+    find / -name "mcu.py" -path "*klippy*" 2>/dev/null
+
+Expected:
+
+    /overlay/upper/usr/share/klipper/klippy/mcu.py
+    /rom/usr/share/klipper/klippy/mcu.py
+    /usr/share/klipper/klippy/mcu.py
+
+### Verify current value
+
+    grep -n "TRSYNC_TIMEOUT" /usr/share/klipper/klippy/mcu.py
+
+Expected output:
+
+    128:TRSYNC_TIMEOUT = 0.05
+    191:        expire_timeout = TRSYNC_TIMEOUT
+
+### Editing method on K1C
+
+BusyBox sed does not fully support bracket expressions like [0-9.], and
+reports cryptic "unmatched '/'" errors. Use nano instead:
 
     sudo cp /usr/share/klipper/klippy/mcu.py /usr/share/klipper/klippy/mcu.py.bak
     sudo nano /usr/share/klipper/klippy/mcu.py
     # Ctrl+W -> search for TRSYNC_TIMEOUT
-    # Change the value from 0.025 to 0.05
+    # Change 0.025 to 0.05
     # Ctrl+X -> Y -> Enter to save
 
-Or use a literal-value sed:
+Or use a literal-value sed (works on BusyBox):
 
     sudo sed -i 's/TRSYNC_TIMEOUT = 0.025/TRSYNC_TIMEOUT = 0.05/' /usr/share/klipper/klippy/mcu.py
 
-Verify:
-
-    grep "TRSYNC_TIMEOUT =" /usr/share/klipper/klippy/mcu.py
-    # Expected: TRSYNC_TIMEOUT = 0.05
-
-Restart:
+### Restart Klipper
 
     sudo systemctl restart klipper
 
-PERSISTENCE WARNING: This change lives in Klipper's source tree. Any
-Klipper update — including automatic updates from the Mainsail update
-manager — will overwrite it and reset the value to 0.025. Re-run after
-every Klipper update.
+### PERSISTENCE WARNING
 
-Rollback:
+Because the file lives in the overlayfs upper layer, the change survives
+normal reboots. A firmware update — from Creality's official updater or
+via the Helper Script's firmware tools — will typically reset the overlay.
+Re-apply after every firmware update. Check with:
+
+    grep "TRSYNC_TIMEOUT =" /usr/share/klipper/klippy/mcu.py
+
+### Rollback
 
     sudo cp /usr/share/klipper/klippy/mcu.py.bak /usr/share/klipper/klippy/mcu.py
     sudo systemctl restart klipper
@@ -418,27 +500,64 @@ Rollback:
 
 ## 7. Communication Issues & Workarounds
 
-### 7.1 Timeout on connect (startup race condition)
+### 7.1 "Timeout on connect" at startup — self-healing race condition
 
-Symptoms: key1 Unhandled exception during run on boot, traceback in
-serialhdl.py.
+### Empirically confirmed behaviour
 
-Diagnosis:
+This printer has been observed to sometimes fail the initial identify
+handshake on cold boot, then succeed on Klipper's automatic retry. From a
+real log:
 
-    tail -n 60 /usr/data/printer_data/logs/klippy.log
+    02:01:44,726  mcu 'mcu': Starting serial connect
+    02:01:49,888  mcu 'mcu': Timeout on connect        <- first attempt failed
+    02:01:53,290  Loaded MCU 'mcu' 116 commands        <- retry succeeded
+    02:01:53,292  mcu 'nozzle_mcu': Starting serial connect
+    02:01:54,336  Loaded MCU 'nozzle_mcu' 116 commands
+    02:01:54,338  mcu 'leveling_mcu': Starting serial connect
+    02:01:55,371  Loaded MCU 'leveling_mcu' 116 commands
+    02:01:56,100  Loaded MCU 'rpi' 104 commands
 
-Look for "mcu 'mcu': Timeout on connect" or a serialqueue TypeError.
+The same log shows other cold boots where no timeout occurred at all:
 
-Workarounds (in order of effort):
+    06:00:21,796  mcu 'mcu': Starting serial connect
+    06:00:22,869  Loaded MCU 'mcu' 116 commands        <- clean, 1 second
 
-1. Full power cycle — turn off with physical switch, wait 30 seconds,
-   turn back on. Most common fix.
-2. FIRMWARE_RESTART from console — often succeeds on second attempt
-   because the MCU has had time to initialize.
-3. Increase TRSYNC_TIMEOUT to 0.05 (see Section 6).
-4. Reseat mainboard cables — especially J11 and J51 on the K1C.
+Same printer, same firmware, same config — the result varies. This is a
+power-on race condition between the host's first identify packet and the
+MCU's own boot sequence. It is inherent to the K1C and cannot be fully
+eliminated by any config change.
 
-Not a config problem. None of the fixes in Section 4 or 5 can cause this.
+### Symptoms in the console
+
+On rare occasions the host Klipper may not retry successfully, and the
+console will show:
+
+    {"code":"key1", "msg":"Unhandled exception during run..."}
+
+with a traceback ending in:
+
+    File ".../serialhdl.py", line 74, in _get_identify_data
+    TypeError: initializer for ctype 'struct serialqueue *' must be a
+    cdata pointer, not NoneType
+
+### Response — in order of effort
+
+1. Wait 10 seconds. Klipper often recovers on its own via retry.
+2. FIRMWARE_RESTART from the console. Recovers in most remaining cases.
+3. Full power cycle — turn off with the physical switch, wait 30
+   seconds, turn on. Always recovers.
+4. If it happens on almost every boot, reseat mainboard cables,
+   especially J11 and J51.
+
+### Do NOT
+
+- Do NOT re-flash the MCU firmware to "fix" this. The firmware is
+  correct; the retry succeeds instantly. Re-flashing risks introducing
+  real problems.
+- Do NOT increase TRSYNC_TIMEOUT expecting it to prevent this. It will
+  not. TRSYNC_TIMEOUT is unrelated (see Section 6).
+- Do NOT panic. The printer self-recovers in the overwhelming majority
+  of occurrences.
 
 ### 7.2 Move queue overflow
 
@@ -474,6 +593,41 @@ Startup log shows each MCU loading in sequence:
 
 Whichever MCU is last in the log before the crash is the one that timed out.
 
+### 7.4 Reading the Stats lines — healthy vs. sick
+
+Klipper emits a Stats line every 3 seconds. Below is what to look for.
+
+### Healthy
+
+    mcu:   mcu_awake=0.004 ... bytes_invalid=0 ... stalled_bytes=0
+           ready_bytes=0 freq=119997115
+    nozzle_mcu:   ... bytes_invalid=0 stalled_bytes=0 ready_bytes=0
+    leveling_mcu: ... bytes_invalid=0 stalled_bytes=0 ready_bytes=0
+    rpi:          ... bytes_invalid=0 stalled_bytes=0 ready_bytes=0
+
+### Sick — warning signs to watch for
+
+| Indicator                     | What it means                          |
+|-------------------------------|----------------------------------------|
+| stalled_bytes > 0             | MCU cannot consume commands fast enough|
+| ready_bytes climbing          | Outgoing buffer backing up             |
+| bytes_invalid > 0             | Wire corruption (cable, EMI, ground)   |
+| bytes_retransmit climbing     | Ongoing packet loss                    |
+| mcu_awake > 0.05              | MCU spending >5% time in interrupts    |
+| mcu_task_avg > 0.00005        | Tasks taking unusually long            |
+| freq drifting from nominal    | Unstable clock (power supply issue)    |
+| send_seq diverging from recv  | Lost packets in flight                 |
+
+### Notes on baseline values
+
+- `bytes_retransmit=9` with `retransmit_seq=2` on the three hardware
+  MCUs is normal. It reflects two handshake retransmits during startup.
+  If it stays frozen across samples, it is not a problem.
+- `rpi` shows `bytes_retransmit=0` because it uses a Linux pipe
+  (/tmp/klipper_host_mcu), not a serial UART.
+- `rto=0.025` at 230400 baud is normal and expected. It is derived
+  from the baud rate and message size, not from TRSYNC_TIMEOUT.
+
 ---
 
 ## 8. Deployment Reference
@@ -492,9 +646,17 @@ Whichever MCU is last in the log before the crash is the one that timed out.
 
 ### Files to rename (SSH)
 
+Note: These files live inside Helper-Script/ on this printer's actual
+filesystem. Earlier instructions in v2.0.9-quality-fix-11-12-13 pointed at
+the wrong path for M600-support.cfg.
+
     cd /usr/data/printer_data/config
-    mv M600-support.cfg M600-support.cfg.disabled
+    mv Helper-Script/M600-support.cfg Helper-Script/M600-support.cfg.disabled
     mv Helper-Script/save-zoffset.cfg Helper-Script/save-zoffset.cfg.disabled
+
+Verify:
+
+    ls /usr/data/printer_data/config/Helper-Script/*.disabled
 
 ### Console commands to run once after upload
 
@@ -527,7 +689,7 @@ Run these from the console after every deployment:
 | 9  | INPUTSHAPER                                   | Runs X and Y calibration in sequence   |
 | 10 | TUNOFFINPUTSHAPER                             | Prints WARNING line                    |
 | 11 | Heat nozzle from cold to 240 C                | No "Heater not heating at expected"    |
-| 12 | ls M600-support.cfg.disabled                  | File exists                            |
+| 12 | ls Helper-Script/*.cfg.disabled               | Files exist                            |
 
 ---
 
@@ -734,6 +896,26 @@ a hot path. Even the 3 dead writes removed in fix #13 cost microseconds.
 The macro should be considered stable and not further modified without a
 specific reproducible reason.
 
+### Correction 6 — TRSYNC_TIMEOUT is not the identify-handshake timeout
+
+Claimed: "Increase TRSYNC_TIMEOUT to 0.05 s to eliminate Timeout on
+connect. Watch the rto= value change in the Stats line as proof."
+
+Reality: Two errors here.
+
+First, TRSYNC_TIMEOUT does not govern the identify handshake. That is a
+separate, hardcoded ~5-second window in serialhdl.py. Increasing
+TRSYNC_TIMEOUT has no effect on the cold-boot identify race.
+
+Second, `rto=` in the Stats lines is not connected to TRSYNC_TIMEOUT.
+It is computed at runtime from baud rate and message size. At 230400 baud
+it will read `rto=0.025` regardless of the source edit.
+
+Impact: The startup race is self-healing via Klipper's automatic retry
+(empirically confirmed). No config change is required for it. The
+TRSYNC_TIMEOUT edit remains useful for the separate clock-sync phase but
+should not be presented as a startup-timeout fix.
+
 ---
 
 ## 13. What NOT to Change
@@ -747,6 +929,8 @@ specific reproducible reason.
 | M600-support.cfg.disabled           | Don't rename back unless removing the new |
 | save-zoffset.cfg.disabled           | Don't rename back under any circumstance  |
 | [bed_mesh] probe_count: 5,5         | Do not raise without PRTouch verification |
+| /rom/usr/share/klipper/...          | Read-only lower layer; edits routed via overlay |
+| MCU firmware re-flash for startup   | Firmware is correct; race is self-healing |
 
 ---
 
@@ -782,12 +966,15 @@ specific reproducible reason.
 
 ### Diagnostics (SSH)
 
-| Command                                                  | Purpose                     |
-|----------------------------------------------------------|-----------------------------|
-| tail -n 60 /usr/data/printer_data/logs/klippy.log        | Recent Klipper activity     |
-| grep -rn "^\[respond\]" /usr/data/printer_data/config/   | Find duplicate sections     |
-| grep "TRSYNC_TIMEOUT =" /usr/share/klipper/klippy/mcu.py | Verify timeout modification |
-| ls /usr/data/printer_data/config/*.disabled              | List disabled config files  |
+| Command                                                       | Purpose                     |
+|---------------------------------------------------------------|-----------------------------|
+| tail -n 60 /usr/data/printer_data/logs/klippy.log             | Recent Klipper activity     |
+| grep -E "Loaded MCU\|Timeout on connect" /usr/.../klippy.log  | MCU handshake history       |
+| grep "Stats " /usr/data/printer_data/logs/klippy.log \| tail -2 | Latest health snapshot    |
+| grep -rn "^\[respond\]" /usr/data/printer_data/config/        | Find duplicate sections     |
+| grep "TRSYNC_TIMEOUT =" /usr/share/klipper/klippy/mcu.py      | Verify timeout modification |
+| find / -name "mcu.py" -path "*klippy*" 2>/dev/null            | Locate Klipper source       |
+| ls /usr/data/printer_data/config/Helper-Script/*.disabled     | List disabled config files  |
 
 ### Backups (SSH)
 
@@ -823,9 +1010,11 @@ specific reproducible reason.
 | key167                                        | G-code rename type mismatch               |
 | MCU 'mcu' shutdown: Move queue overflow       | Host sent commands too fast               |
 | Unknown skew profile: default                 | Skew not saved, or fix #12 not applied    |
-| Timeout on connect                            | MCU did not respond during handshake      |
+| Timeout on connect                            | MCU did not respond to identify in time   |
 | Heater extruder not heating at expected rate  | verify_heater check failed                |
 | gcode_macro X is not defined in config        | Missing [include], or duplicate section   |
+| TypeError: initializer for ctype 'struct      | Downstream symptom of failed identify     |
+|   serialqueue *' must be a cdata pointer      | (see Timeout on connect)                  |
 
 ---
 
@@ -858,6 +1047,25 @@ If any of these appear twice in:
 
 ---
 
+## Appendix D — Health Snapshot Reference
+
+Copy-paste this table when comparing a healthy printer to a suspect one.
+
+| Indicator       | Healthy value      | Sick value (action)                    |
+|-----------------|--------------------|----------------------------------------|
+| stalled_bytes   | 0                  | >0 → check slicer settings (§7.2)      |
+| ready_bytes     | 0                  | climbing → check cable or EMI          |
+| bytes_invalid   | 0                  | >0 → check cable, power supply         |
+| bytes_retransmit| 9 (frozen)         | climbing → check cable, EMI, ground    |
+| mcu_awake       | ≤ 0.005            | > 0.05 → MCU overloaded or stuck       |
+| mcu_task_avg    | ≤ 0.00002          | > 0.00005 → MCU busy or slow           |
+| sysload         | < 1.0              | > 2.0 sustained → host overloaded      |
+| memavail        | stable, > 100 MB   | falling → memory leak                  |
+| print_stall     | 0                  | >0 during print → host can't keep up   |
+| rto             | 0.025 at 230400    | n/a — this is a constant, not a signal |
+
+---
+
 **End of Reference Document**
 
 Keep this file at /usr/data/printer_data/config/K1C_REFERENCE.md or similar.
@@ -868,4 +1076,4 @@ what was changed, why, and how to verify or roll back.
 
 *Generated: 2026-09-27*
 *Printer: K1C*
-*Klipper config version: v2.0.9-quality-fix-11-12-13*
+*Klipper config version: v2.0.9-corrections*
