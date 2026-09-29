@@ -27,7 +27,7 @@ automatic_transition = True
 job_transition_delay = 0.5
 
 [authorization]
-force_logins = True
+force_logins = False
 cors_domains = 
 	*.lan
 	*.local
