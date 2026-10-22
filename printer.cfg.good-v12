@@ -1,0 +1,823 @@
+# =============================================================================
+# Creality K1C - Klipper Printer Configuration
+# REV 2026-10-22 (v12) - bulletproof inline CLEAR_NOZZLE_QUICK
+#
+# Changes from v11:
+#   * CLEAR_NOZZLE_QUICK is now INLINED below, not loaded via include.
+#     The include mechanism failed 5 times on this firmware.
+#   * rename_existing: CLEAR_NOZZLE_QUICK_ORIGINAL removed - Creality
+#     [prtouch_v2] does not register CLEAR_NOZZLE_QUICK_ORIGINAL on this
+#     firmware, so the rename had no target and the macro was silently
+#     dropped. Inline with no rename = guaranteed registration.
+#   * clr_noz_quick set to false in [prtouch_v2] to avoid any future
+#     duplicate-macro conflict.
+#   * TMC X/Y run_current 1.1 A (OTPW fix), g28_ext_temp 180 (CX_ROUGH
+#     minimum), all v11 fixes retained.
+# =============================================================================
+
+[include k1c_compat.cfg]
+[include custom_purge.cfg]
+[include zoffset-guppy.cfg]
+[include k1c_chamber_overrides.cfg]
+
+# Optional skew calibration - uncomment if skew_calibration_macros.cfg exists
+# [include skew_calibration_macros.cfg]
+
+[custom_macro]
+default_bed_temp: 50
+default_extruder_temp: 240
+g28_ext_temp: 180
+
+[mcu]
+serial: /dev/ttyS7
+baud: 230400
+restart_method: command
+
+[mcu nozzle_mcu]
+serial: /dev/ttyS1
+baud: 230400
+restart_method: command
+
+[mcu leveling_mcu]
+serial: /dev/ttyS9
+baud: 230400
+restart_method: command
+
+[mcu rpi]
+serial: /tmp/klipper_host_mcu
+
+[printer]
+kinematics: corexy
+max_velocity: 600
+max_accel: 20000
+max_accel_to_decel: 20000
+max_z_velocity: 10
+max_z_accel: 300
+square_corner_velocity: 5.0
+square_corner_max_velocity: 200.0
+
+[force_move]
+enable_force_move: true
+
+[gcode_arcs]
+resolution: 1.0
+
+[input_shaper]
+shaper_type_x: 2hump_ei
+shaper_freq_x: 65.8
+shaper_type_y: zv
+shaper_freq_y: 61.8
+
+[respond]
+
+[stepper_x]
+step_pin: PC2
+dir_pin: !PB9
+enable_pin: !PC3
+microsteps: 32
+rotation_distance: 39.920
+endstop_pin: tmc2209_stepper_x:virtual_endstop
+position_endstop: 229
+position_min: -5
+position_max: 229
+homing_speed: 30
+homing_retract_dist: 0
+
+[stepper_y]
+step_pin: PB8
+dir_pin: !PB7
+enable_pin: !PC3
+microsteps: 32
+rotation_distance: 39.920
+endstop_pin: tmc2209_stepper_y:virtual_endstop
+position_endstop: -0.5
+position_min: -0.5
+position_max: 227
+homing_speed: 30
+homing_retract_dist: 0
+
+[stepper_z]
+step_pin: PB6
+dir_pin: !PB5
+enable_pin: !PC3
+microsteps: 16
+rotation_distance: 8
+gear_ratio: 64:20
+endstop_pin: tmc2209_stepper_z:virtual_endstop
+position_endstop: 0
+position_max: 255
+position_min: -5
+
+[tmc2209 stepper_x]
+uart_pin: PA9
+interpolate: True
+run_current: 1.1
+sense_resistor: 0.100
+stealthchop_threshold: 0
+uart_address: 3
+diag_pin: ^PB12
+driver_sgthrs: 75
+
+[tmc2209 stepper_y]
+uart_pin: PA10
+interpolate: True
+run_current: 1.1
+sense_resistor: 0.100
+stealthchop_threshold: 0
+uart_address: 3
+diag_pin: ^PB13
+driver_sgthrs: 75
+
+[tmc2209 stepper_z]
+uart_pin: PA11
+uart_address: 3
+run_current: 0.8
+diag_pin: ^PB14
+stealthchop_threshold: 0
+sense_resistor: 0.100
+driver_sgthrs: 0
+
+[extruder]
+max_extrude_only_distance: 1000.0
+max_extrude_cross_section: 80
+step_pin: nozzle_mcu:PB1
+dir_pin: nozzle_mcu:PB0
+enable_pin: !nozzle_mcu:PB2
+microsteps: 16
+rotation_distance: 6.9
+nozzle_diameter: 0.400
+filament_diameter: 1.750
+heater_pin: nozzle_mcu:PB7
+sensor_type: EPCOS 100K B57560G104F
+sensor_pin: nozzle_mcu:PA0
+pressure_advance: 0.04
+pressure_advance_smooth_time: 0.040
+control: pid
+pid_kp: 25.013
+pid_ki: 2.566
+pid_kd: 60.966
+min_temp: 0
+max_temp: 320
+
+[tmc2209 extruder]
+uart_pin: nozzle_mcu:PB11
+tx_pin: nozzle_mcu:PB10
+uart_address: 3
+run_current: 0.55
+sense_resistor: 0.150
+stealthchop_threshold: 0
+
+[heater_bed]
+heater_pin: PB10
+sensor_type: EPCOS 100K B57560G104F
+sensor_pin: PC4
+control: watermark
+min_temp: 0
+max_temp: 115
+
+[verify_heater heater_bed]
+check_gain_time: 120
+heating_gain: 1.0
+hysteresis: 10
+
+[temperature_sensor mcu_temp]
+sensor_type: temperature_mcu
+min_temp: 0
+max_temp: 100
+
+# PC0 and PC5 are owned by [temperature_fan chamber_fan] in
+# k1c_chamber_overrides.cfg. No standalone [temperature_sensor chamber_temp].
+[duplicate_pin_override]
+pins: PC0, PC5, PB2, PC6
+
+[multi_pin heater_fans]
+pins: nozzle_mcu:PB5,PB2
+
+[heater_fan hotend_fan]
+pin: multi_pin:heater_fans
+heater: extruder
+heater_temp: 40
+
+[static_digital_output my_fan_output_pins]
+pins: nozzle_mcu: PB6
+
+[output_pin fan0]
+pin: !nozzle_mcu: PB8
+pwm: True
+cycle_time: 0.0100
+hardware_pwm: false
+value: 0.00
+scale: 255
+shutdown_value: 0.0
+
+[output_pin fan2]
+pin: PB1
+pwm: True
+cycle_time: 0.0100
+hardware_pwm: false
+value: 0.00
+scale: 255
+shutdown_value: 0.0
+
+[output_pin LED]
+pin: PB0
+pwm: True
+cycle_time: 0.010
+value: 1
+
+[gcode_macro M106]
+description: Fan control
+gcode:
+  {% if params.P is defined and (params.P|int == 1 or params.P|int == 3) %}
+    {% if params.S is defined and params.S|float > 0 %}
+      M141 S50
+    {% else %}
+      M141 S0
+    {% endif %}
+  {% else %}
+    {% set fans = printer["gcode_macro PRINTER_PARAM"].fans|int %}
+    {% set fan = 0 %}
+    {% set value = 0 %}
+    {% if params.P is defined %}
+      {% set tmp = params.P|int %}
+      {% if tmp < fans %}
+        {% set fan = tmp %}
+      {% endif %}
+    {% endif %}
+    {% if params.S is defined %}
+      {% set tmp = params.S|float %}
+    {% else %}
+      {% set tmp = 255 %}
+    {% endif %}
+    {% if tmp > 0 %}
+      {% if fan == 0 %}
+        {% set value = (255 - printer["gcode_macro PRINTER_PARAM"].fan0_min) / 255 * tmp %}
+        {% if printer['gcode_macro Qmode'].flag | int == 1 %}
+          SET_GCODE_VARIABLE MACRO=Qmode VARIABLE=fan0_value VALUE={printer["gcode_macro PRINTER_PARAM"].fan0_min + value}
+          {% if value > (255 - printer['gcode_macro PRINTER_PARAM'].fan0_min) / 2 %}
+            {% set value = printer["gcode_macro PRINTER_PARAM"].fan0_min + (255 - printer['gcode_macro PRINTER_PARAM'].fan0_min) / 2 %}
+          {% else %}
+            {% set value = printer["gcode_macro PRINTER_PARAM"].fan0_min + value %}
+          {% endif %}
+        {% else %}
+          {% set value = printer["gcode_macro PRINTER_PARAM"].fan0_min + value %}
+        {% endif %}
+      {% endif %}
+      {% if fan == 2 %}
+        {% set value = (255 - printer["gcode_macro PRINTER_PARAM"].fan2_min) / 255 * tmp %}
+        {% if printer['gcode_macro Qmode'].flag | int == 1 %}
+          SET_GCODE_VARIABLE MACRO=Qmode VARIABLE=fan2_value VALUE={printer["gcode_macro PRINTER_PARAM"].fan2_min + value}
+          {% if value > (255 - printer['gcode_macro PRINTER_PARAM'].fan2_min) / 2 %}
+            {% set value = printer["gcode_macro PRINTER_PARAM"].fan2_min + (255 - printer['gcode_macro PRINTER_PARAM'].fan2_min) / 2 %}
+          {% else %}
+            {% set value = printer["gcode_macro PRINTER_PARAM"].fan2_min + value %}
+          {% endif %}
+        {% else %}
+          {% set value = printer["gcode_macro PRINTER_PARAM"].fan2_min + value %}
+        {% endif %}
+      {% endif %}
+    {% endif %}
+    {% if value >= 255 %}
+      {% set value = 255 %}
+    {% endif %}
+    SET_PIN PIN=fan{fan} VALUE={value}
+  {% endif %}
+
+[gcode_macro M141]
+description: Chamber exhaust target temperature
+gcode:
+  {% if 'S' in params %}
+    {% set target = params.S|int %}
+    {% if target > 0 and target < 70 %}
+      SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber_fan TARGET={target}
+    {% else %}
+      SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber_fan TARGET=70
+    {% endif %}
+  {% endif %}
+
+[gcode_macro M191]
+description: Wait for chamber temperature
+gcode:
+  {% if 'S' in params %}
+    {% set s = params.S|float %}
+    {% if s > 0 and s <= 70 %}
+      {% set ct = printer["temperature_fan chamber_fan"].temperature|float %}
+      {% if s > ct %}
+        M140 S100
+        TEMPERATURE_WAIT SENSOR="temperature_fan chamber_fan" MINIMUM={s-1}
+      {% endif %}
+    {% endif %}
+  {% endif %}
+
+[filament_switch_sensor filament_sensor_2]
+pause_on_runout: true
+switch_pin: !nozzle_mcu:PA10
+runout_gcode:
+  {% if printer.extruder.can_extrude|lower == 'true' %}
+    G91
+    G0 E30 F600
+    G90
+  {% endif %}
+  PAUSE
+
+[adxl345]
+cs_pin: nozzle_mcu:PA4
+spi_speed: 5000000
+axes_map: x,-z,y
+spi_software_sclk_pin: nozzle_mcu:PA5
+spi_software_mosi_pin: nozzle_mcu:PA7
+spi_software_miso_pin: nozzle_mcu:PA6
+
+[resonance_tester]
+accel_chip: adxl345
+accel_per_hz: 75
+probe_points: 110,110,10
+
+[prtouch_v2]
+pr_version: 1
+step_base: 2
+z_offset: 0
+noz_ex_com: 0.06
+tilt_corr_dis: 0
+tri_min_hold: 2500,20000
+tri_max_hold: 6000,60000
+pres_cnt: 4
+pres0_clk_pins: leveling_mcu:PA5
+pres0_sdo_pins: leveling_mcu:PA1
+pres1_clk_pins: leveling_mcu:PA2
+pres1_sdo_pins: leveling_mcu:PA0
+pres2_clk_pins: leveling_mcu:PA6
+pres2_sdo_pins: leveling_mcu:PA3
+pres3_clk_pins: leveling_mcu:PA7
+pres3_sdo_pins: leveling_mcu:PA4
+show_msg: False
+step_swap_pin: PC10
+pres_swap_pin: leveling_mcu:PB1
+g28_wait_cool_down: true
+pa_clr_down_mm: -0.15
+clr_noz_start_x: 87
+clr_noz_start_y: 225
+clr_noz_len_x: 46
+clr_noz_len_y: 1
+speeds: 2.5,1.0
+tri_hftr_cut: 2,1
+tri_lftr_k1: 0.70,0.30
+tri_try_max_times: 10
+clr_noz_quick: false
+clr_quick_high: 0.7
+clr_xy_quick_spd: 100
+clr_quick_times: 10
+clr_quick_react_dis: 5
+
+[bed_mesh]
+speed: 150
+mesh_min: 5,5
+mesh_max: 215,215
+probe_count: 5,5
+fade_start: 5.0
+fade_end: 50.0
+
+[skew_correction]
+
+[bl24c16f]
+i2c_mcu: rpi
+i2c_bus: i2c.2
+i2c_speed: 400000
+
+[virtual_sdcard]
+path: /usr/data/printer_data/gcodes
+
+[display_status]
+
+[pause_resume]
+
+[exclude_object]
+
+[gcode_macro xyz_ready]
+variable_x_ready: 0
+variable_y_ready: 0
+variable_z_ready: 0
+variable_xy_moved: 0
+variable_z_moved: 0
+variable_safe_z: 3
+gcode:
+
+[gcode_macro _IF_HOME_Z]
+gcode:
+  {% if printer['gcode_macro xyz_ready'].z_ready|int == 1 %}
+    {% if printer.toolhead.position.z|int < 5 %}
+      {% set z_park = 5.0 - printer.toolhead.position.z|int %}
+      G91
+      G1 z{z_park} F600
+      G90
+    {% endif %}
+  {% else %}
+    {% if printer['gcode_macro xyz_ready'].z_moved|int == 0 %}
+      {% if printer.print_stats.z_pos|float <= 20.0 or printer.print_stats.power_loss == 1 %}
+        FORCE_MOVE STEPPER=stepper_z DISTANCE={printer["gcode_macro PRINTER_PARAM"].z_safe_g28} VELOCITY=10
+      {% else %}
+        FORCE_MOVE STEPPER=stepper_z DISTANCE=0.1 VELOCITY=10
+      {% endif %}
+      M400
+      SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=z_moved VALUE=1
+    {% endif %}
+  {% endif %}
+
+[gcode_macro _IF_MOVE_XY]
+gcode:
+  _IF_HOME_Z
+  {% if printer['gcode_macro xyz_ready'].xy_moved|int == 0 %}
+    {action_respond_info("move xy\n")}
+    FORCE_MOVE STEPPER=stepper_y DISTANCE=-14 VELOCITY=50
+    FORCE_MOVE STEPPER=stepper_y DISTANCE=7 VELOCITY=50
+    M400
+    SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=xy_moved VALUE=1
+    G4 P1000
+  {% endif %}
+
+[gcode_macro _HOME_X]
+gcode:
+  _IF_MOVE_XY
+  {% if printer['gcode_macro xyz_ready'].x_ready|int == 1 %}
+    {% if (printer.configfile.settings['stepper_x'].position_max - printer.toolhead.position.x)|round < 10 %}
+      {% set x_park = (10 - (printer.configfile.settings['stepper_x'].position_max - printer.toolhead.position.x))|round %}
+      {% if x_park > 0 %}
+        G91
+        G1 x-{x_park} F3600
+        G90
+        G4 P1000
+      {% endif %}
+    {% endif %}
+  {% endif %}
+  M400
+  G28 X
+  SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=x_ready VALUE=1
+  G91
+  G1 x-10 F3600
+  G90
+  G4 P2000
+
+[gcode_macro _HOME_Y]
+gcode:
+  _IF_MOVE_XY
+  {% if printer['gcode_macro xyz_ready'].y_ready|int == 1 %}
+    {% if printer.toolhead.position.y|round < 9 %}
+      {% set y_park = 9 - printer.toolhead.position.y|round %}
+      {% if y_park > 0 %}
+        G91
+        G1 y{y_park} F3600
+        G90
+        G4 P1000
+      {% endif %}
+    {% endif %}
+  {% endif %}
+  M400
+  G28 Y
+  SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=y_ready VALUE=1
+  G91
+  G1 y10 F3600
+  G90
+  G4 P2000
+
+[gcode_macro _HOME_Z]
+gcode:
+  {% if printer['gcode_macro xyz_ready'].y_ready|int == 1 %}
+    {% if printer['gcode_macro xyz_ready'].x_ready|int == 1 %}
+      _IF_HOME_Z
+    {% endif %}
+  {% endif %}
+  {% if printer.print_stats.z_pos|float >= 210.0 %}
+    FORCE_MOVE STEPPER=stepper_z DISTANCE=-8 VELOCITY=10
+    M400
+  {% endif %}
+  {% set POSITION_X = printer.configfile.settings['stepper_x'].position_max/2 %}
+  {% set POSITION_Y = printer.configfile.settings['stepper_y'].position_max/2 %}
+  G91
+  {% set x_park = POSITION_X - printer.toolhead.position.x|int %}
+  {% set y_park = POSITION_Y - printer.toolhead.position.y|int %}
+  {action_respond_info("x_park = %s \n" % (x_park))}
+  {action_respond_info("y_park = %s \n" % (y_park))}
+  G1 x{x_park} y{y_park} F3600
+  G90
+  M400
+  G28 Z
+  SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=z_ready VALUE=1
+
+[homing_override]
+axes: xyz
+gcode:
+  M220 S100
+  {% set x_axes = printer.toolhead.homed_axes %}
+  {% if x_axes is defined and x_axes[0] is defined %}
+    {action_respond_info("x_axes: %s \n" % (x_axes))}
+  {% else %}
+    SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=x_ready VALUE=0
+    SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=y_ready VALUE=0
+    SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=z_ready VALUE=0
+    SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=xy_moved VALUE=0
+    SET_GCODE_VARIABLE MACRO=xyz_ready VARIABLE=z_moved VALUE=0
+    {action_respond_info("x_axes is NULL\n")}
+  {% endif %}
+  {% if x_axes is not defined or x_axes[2] is not defined %}
+    BED_MESH_CLEAR
+  {% endif %}
+  {% if x_axes is defined and x_axes[0] is defined and x_axes[1] is defined %}
+    {action_respond_info("x_axes: %s \n" % (x_axes))}
+    {% set position_y = printer.toolhead.position.y|int %}
+    {% set max_y_position = printer["gcode_macro PRINTER_PARAM"].max_y_position|int %}
+    {% if position_y >= max_y_position %}
+      G91
+      G0 Y-10 F3600
+      G90
+    {% endif %}
+  {% endif %}
+  {% set home_all = 'X' not in params and 'Y' not in params %}
+  {% if 'Z' in params and 'X' not in params and 'Y' not in params %}
+    {% if x_axes[0] is defined and x_axes[1] is defined %}
+      {% set home_all = 0 %}
+    {% endif %}
+  {% endif %}
+  {% if home_all or 'X' in params %}_HOME_X{% endif %}
+  {% if home_all or 'Y' in params %}_HOME_Y{% endif %}
+  {% if home_all or 'X' in params %}_HOME_X{% endif %}
+  {% if home_all or 'Y' in params %}_HOME_Y{% endif %}
+  {% if home_all or 'Z' in params %}_HOME_Z{% endif %}
+  {% if 'default' in printer.bed_mesh.profiles %}
+    BED_MESH_PROFILE LOAD="default"
+  {% endif %}
+  G4 P500
+
+[gcode_macro product_param]
+variable_bed_size_x: 220
+variable_bed_size_y: 220
+variable_bed_size_z: 220
+variable_nozzle_temp: 300
+variable_bed_temp: 100
+variable_chamber_temp: 60
+gcode:
+
+[gcode_macro PRINTER_PARAM]
+variable_max_z_position: 255
+variable_max_y_position: 227
+variable_z_safe_g28: 10.0
+variable_fans: 3
+variable_z_safe_pause: 0
+variable_hotend_temp: 0
+variable_fan0_speed: 0
+variable_fan1_speed: 0
+variable_fan2_speed: 0
+variable_fan0_min: 0
+variable_fan1_min: 0
+variable_fan2_min: 0
+gcode:
+
+[gcode_macro Qmode]
+variable_flag: 0
+variable_max_accel: 15000
+variable_max_velocity: 600
+variable_max_z_velocity: 10
+variable_max_accel_to_decel: 7500
+variable_fan0_value: 0
+variable_fan1_value: 0
+variable_fan2_value: 0
+gcode:
+
+[gcode_macro CUSTOM_DEFAULTS]
+variable_default_bed_temp: 50.0
+variable_default_extruder_temp: 240.0
+variable_g28_ext_temp: 180.0
+gcode:
+
+[gcode_macro M300]
+gcode:
+
+[gcode_macro START_PRINT]
+variable_prepare: 0
+gcode:
+  SAVE_GCODE_STATE NAME=START_PRINT_state
+  {% set fs = printer['filament_switch_sensor filament_sensor'] %}
+  {% if fs is not none and not fs.filament_detected %}
+    {action_raise_error("START_PRINT aborted: filament sensor reports no filament")}
+  {% endif %}
+  G92 E0
+  M400
+  WAIT_TEMP_END
+  CLEAR_PAUSE
+  {% set bed_temp = printer['gcode_macro CUSTOM_DEFAULTS'].default_bed_temp|float(default=50.0) %}
+  {% if 'BED_TEMP' in params %}
+    {% set raw = params.BED_TEMP|string %}
+    {% set clean = raw.replace('[','').replace(']','').replace('(','').replace(')','').split(',')[0]|trim %}
+    {% if clean|length > 0 %}{% set bed_temp = clean|float(default=bed_temp) %}{% endif %}
+  {% endif %}
+  {% set extruder_temp = printer['gcode_macro CUSTOM_DEFAULTS'].default_extruder_temp|float(default=240.0) %}
+  {% if 'EXTRUDER_TEMP' in params %}
+    {% set raw = params.EXTRUDER_TEMP|string %}
+    {% set clean = raw.replace('[','').replace(']','').replace('(','').replace(')','').split(',')[0]|trim %}
+    {% if clean|length > 0 %}{% set extruder_temp = clean|float(default=extruder_temp) %}{% endif %}
+  {% endif %}
+  {% set g28_temp = printer['gcode_macro CUSTOM_DEFAULTS'].g28_ext_temp|float(default=180.0) %}
+  {action_respond_info("START_PRINT: BED=%sC  HOTEND=%sC  G28=%sC" % (bed_temp, extruder_temp, g28_temp))}
+  {% set ftype = params.FILAMENT_TYPE|default("")|upper %}
+  {% set chamber_temp = 0 %}
+  {% if 'CHAMBER_TEMP' in params %}
+    {% set raw = params.CHAMBER_TEMP|string %}
+    {% set clean = raw.replace('[','').replace(']','').replace('(','').replace(')','').split(',')[0]|trim %}
+    {% if clean|length > 0 %}
+      {% set parsed = clean|float(default=0) %}
+      {% if parsed > 0 and parsed < 80 %}{% set chamber_temp = parsed|int %}{% endif %}
+    {% endif %}
+  {% endif %}
+  {% if chamber_temp == 0 %}
+    {% if ftype.startswith("ABS") or ftype.startswith("ASA") %}
+      {% set chamber_temp = 50 %}
+    {% endif %}
+  {% endif %}
+  {action_respond_info("Chamber fan target: %sC (filament: %s)" % (chamber_temp, ftype))}
+  M141 S{chamber_temp}
+  RESPOND TYPE=command MSG="Heating bed to {bed_temp}C and hotend to {g28_temp}C for homing/cleaning..."
+  M140 S{bed_temp}
+  M104 S{g28_temp}
+  M190 S{bed_temp}
+  M109 S{g28_temp}
+  ZOFFSET_CLEAR
+  {% set bed_min_x = printer.configfile.settings.bed_mesh.mesh_min[0]|float(default=5) %}
+  {% set bed_min_y = printer.configfile.settings.bed_mesh.mesh_min[1]|float(default=5) %}
+  {% set bed_max_x = printer.configfile.settings.bed_mesh.mesh_max[0]|float(default=215) %}
+  {% set bed_max_y = printer.configfile.settings.bed_mesh.mesh_max[1]|float(default=215) %}
+  {% set raw_min = params.MESH_MIN|default("")|string %}
+  {% set raw_max = params.MESH_MAX|default("")|string %}
+  {% set raw_min = raw_min.replace('[','').replace(']','').replace('(','').replace(')','')|trim %}
+  {% set raw_max = raw_max.replace('[','').replace(']','').replace('(','').replace(')','')|trim %}
+  {% set use_adaptive = false %}
+  {% if raw_min != "" and raw_max != "" %}
+    {% if raw_min.split(',')|length == 2 and raw_max.split(',')|length == 2 %}
+      {% set use_adaptive = true %}
+    {% endif %}
+  {% endif %}
+  {% if printer['gcode_macro START_PRINT'].prepare|int == 0 %}
+    {action_respond_info("not prepare.\n")}
+    CX_ROUGH_G28 EXTRUDER_TEMP={g28_temp} BED_TEMP={bed_temp}
+    CX_NOZZLE_CLEAR
+    ACCURATE_G28
+    {% if use_adaptive %}
+      {% set min_parts = raw_min.split(',') %}
+      {% set max_parts = raw_max.split(',') %}
+      {% set min_x = min_parts[0]|float(default=bed_min_x) %}
+      {% set min_y = min_parts[1]|float(default=bed_min_y) %}
+      {% set max_x = max_parts[0]|float(default=bed_max_x) %}
+      {% set max_y = max_parts[1]|float(default=bed_max_y) %}
+      {% if min_x < bed_min_x %}{% set min_x = bed_min_x %}{% endif %}
+      {% if min_y < bed_min_y %}{% set min_y = bed_min_y %}{% endif %}
+      {% if max_x > bed_max_x %}{% set max_x = bed_max_x %}{% endif %}
+      {% if max_y > bed_max_y %}{% set max_y = bed_max_y %}{% endif %}
+      {% if max_x - min_x < 10 %}
+        {% set min_x = bed_min_x %}
+        {% set max_x = bed_min_x + 10 %}
+        {% if max_x > bed_max_x %}{% set max_x = bed_max_x %}{% endif %}
+      {% endif %}
+      {% if max_y - min_y < 10 %}
+        {% set min_y = bed_min_y %}
+        {% set max_y = bed_min_y + 10 %}
+        {% if max_y > bed_max_y %}{% set max_y = bed_max_y %}{% endif %}
+      {% endif %}
+      RESPOND TYPE=command MSG="Adaptive mesh: X {min_x}-{max_x} Y {min_y}-{max_y} (5x5 fixed)"
+      BED_MESH_CLEAR
+      BED_MESH_CALIBRATE MESH_MIN={min_x},{min_y} MESH_MAX={max_x},{max_y}
+      BED_MESH_OUTPUT
+    {% else %}
+      {action_respond_info("Full bed mesh via CX_PRINT_LEVELING_CALIBRATION")}
+      CX_PRINT_LEVELING_CALIBRATION
+    {% endif %}
+  {% else %}
+    PRINT_PREPARE_CLEAR
+  {% endif %}
+  ZOFFSET_RESTORE
+  {% if printer.toolhead.homed_axes != "xyz" %}
+    RESPOND TYPE=command MSG="START_PRINT: axes not homed - running G28 before purge"
+    G28
+  {% endif %}
+  RESPOND TYPE=command MSG="Heating hotend to {extruder_temp}C for purge..."
+  M109 S{extruder_temp}
+  G92 E0
+  M400
+  _CUSTOM_PURGE_LINE
+  M400
+  RESTORE_GCODE_STATE NAME=START_PRINT_state
+
+[gcode_macro END_PRINT]
+description: Safe end-of-print cleanup
+gcode:
+  SAVE_GCODE_STATE NAME=END_PRINT_state
+  TURN_OFF_HEATERS
+  M141 S0
+  M106 P0 S0
+  M106 P2 S0
+  {% if printer.extruder.can_extrude|lower == 'true' %}
+    M83
+    G92 E0
+    G1 E-2 F1800
+    M400
+  {% endif %}
+  {% if "xyz" in printer.toolhead.homed_axes %}
+    G91
+    G1 Z10 F600
+    M400
+    G90
+    G1 X10 Y10 F6000
+    M400
+  {% endif %}
+  BED_MESH_CLEAR
+  SET_GCODE_OFFSET Z=0 MOVE=0
+  M84
+  RESPOND TYPE=command MSG="Print complete. Heaters off, toolhead parked, steppers released."
+  RESTORE_GCODE_STATE NAME=END_PRINT_state
+
+[gcode_macro CX_NOZZLE_CLEAR]
+rename_existing: CX_NOZZLE_CLEAR_ORIGINAL
+description: Nozzle cleaning routine
+gcode:
+  {% if "xyz" not in printer.toolhead.homed_axes %}
+    G28
+  {% endif %}
+  {% set start_x = 90 %}
+  {% set start_y = 226 %}
+  {% set start_z = 3.8 %}
+  {% set wipe_dist = 40 %}
+  {% set wipe_qty = 10 %}
+  {% set wipe_spd = 250 %}
+  {% set raise_distance = 15 %}
+  G90
+  G1 X{start_x} Y{start_y} F6000
+  G1 Z{start_z} F1500
+  {% for wipes in range(1, (wipe_qty + 1)) %}
+    G1 X{start_x + wipe_dist} F{wipe_spd * 60}
+    G1 X{start_x} F{wipe_spd * 60}
+  {% endfor %}
+  G1 Z{raise_distance} F1500
+
+[gcode_macro CLEAR_NOZZLE_QUICK]
+description: Custom nozzle clean on rear silicone brush
+gcode:
+  {% if "xyz" not in printer.toolhead.homed_axes %}
+    G28
+  {% endif %}
+  {% set brush_x = 87 %}
+  {% set brush_y = 225 %}
+  {% set wipe_len = 46 %}
+  {% set wipe_z = 0.5 %}
+  {% set passes = 6 %}
+  {% set feed_xy = 3000 %}
+  {% set feed_z = 500 %}
+  G90
+  G1 Z5 F600
+  G1 X{brush_x} Y{brush_y} F6000
+  G1 Z{wipe_z} F{feed_z}
+  {% for i in range(passes) %}
+    G1 X{brush_x + wipe_len} F{feed_xy}
+    G1 X{brush_x} F{feed_xy}
+  {% endfor %}
+  G1 Z5 F600
+
+[fan_feedback]
+fan0_pin: nozzle_mcu:PB4
+fan1_pin: PC6
+print_delay_time: 5
+current_delay_time: 2
+
+[delayed_gcode LOAD_SKEW]
+initial_duration: 5
+gcode:
+  {% if printer.skew_correction is not none %}
+    {% set profiles = printer.skew_correction.profiles %}
+    {% if profiles is not none and 'default' in profiles %}
+      SKEW_PROFILE LOAD=default
+    {% else %}
+      {action_respond_info("LOAD_SKEW: no 'default' skew profile saved - skipping")}
+    {% endif %}
+  {% endif %}
+
+[include guppy_cmd.cfg]
+[include guppy_update.cfg]
+[include M600-support-custom.cfg]
+
+#*# <---------------------- SAVE_CONFIG ---------------------->
+#*# DO NOT EDIT THIS BLOCK OR BELOW. The contents are auto-generated.
+#*#
+#*# [bed_mesh default]
+#*# version = 1
+#*# points =
+#*#  0.087562, -0.004875, -0.019969, -0.002094, 0.080156
+#*#  0.123594, 0.082469, 0.070469, 0.096125, 0.146625
+#*#  0.118260, 0.116646, 0.096437, 0.099969, 0.129813
+#*#  0.104437, 0.033000, 0.052812, 0.032927, 0.090813
+#*#  0.028906, -0.074500, -0.089719, -0.072500, 0.086102
+#*# x_count = 5
+#*# y_count = 5
+#*# mesh_x_pps = 2
+#*# mesh_y_pps = 2
+#*# algo = lagrange
+#*# tension = 0.2
+#*# min_x = 5.0
+#*# max_x = 215.0
+#*# min_y = 5.0
+#*# max_y = 215.0
