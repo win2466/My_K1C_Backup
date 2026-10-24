@@ -46,6 +46,9 @@ restart_method: command
 [mcu rpi]
 serial: /tmp/klipper_host_mcu
 
+[force_move]
+enable_force_move: true
+
 [printer]
 kinematics: corexy
 max_velocity: 600
@@ -55,12 +58,6 @@ max_z_velocity: 10
 max_z_accel: 300
 square_corner_velocity: 5.0
 square_corner_max_velocity: 200.0
-
-[force_move]
-enable_force_move: true
-
-[gcode_arcs]
-resolution: 1.0
 
 [input_shaper]
 shaper_type_x: 2hump_ei
@@ -336,7 +333,7 @@ probe_points: 110,110,10
 [prtouch_v2]
 pr_version: 1
 step_base: 2
-z_offset: 0
+#z_offset: 0
 noz_ex_com: 0.06
 tilt_corr_dis: 0
 tri_min_hold: 2500,20000
@@ -542,8 +539,8 @@ gcode:
   {% if home_all or 'X' in params %}_HOME_X{% endif %}
   {% if home_all or 'Y' in params %}_HOME_Y{% endif %}
   {% if home_all or 'Z' in params %}_HOME_Z{% endif %}
-  {% if 'default' in printer.bed_mesh.profiles %}
-    BED_MESH_PROFILE LOAD="default"
+  {% if 'k1c_mesh' in printer.bed_mesh.profiles %}
+    BED_MESH_PROFILE LOAD="k1c_mesh"
   {% endif %}
   G4 P500
 
@@ -585,7 +582,7 @@ gcode:
 [gcode_macro CUSTOM_DEFAULTS]
 variable_default_bed_temp: 50.0
 variable_default_extruder_temp: 240.0
-variable_g28_ext_temp: 180.0
+variable_g28_ext_temp: 240.0
 gcode:
 
 [gcode_macro M300]
@@ -695,7 +692,6 @@ gcode:
     RESPOND TYPE=command MSG="START_PRINT: axes not homed - running G28 before purge"
     G28
   {% endif %}
-  ZOFFSET_RESTORE
   RESPOND TYPE=command MSG="Heating hotend to {extruder_temp}C for purge..."
   M109 S{extruder_temp}
   G92 E0
@@ -703,6 +699,11 @@ gcode:
   _CUSTOM_PURGE_LINE
   M400
   RESTORE_GCODE_STATE NAME=START_PRINT_state
+  ZOFFSET_RESTORE
+  # thermal compensation disabled so the saved gcode_offset is the only variable
+  # {% set thermal_comp = (extruder_temp - g28_temp) * 0.000465 %}
+  # _SET_GCODE_OFFSET Z_ADJUST={thermal_comp} MOVE=1
+  # {action_respond_info("Thermal compensation: %.4fmm  probe=%.1fC  print=%.1fC" % (thermal_comp, g28_temp, extruder_temp))}
 
 [gcode_macro END_PRINT]
 description: Safe end-of-print cleanup
@@ -777,6 +778,7 @@ gcode:
     G1 X{brush_x} F{feed_xy}
   {% endfor %}
   G1 Z5 F600
+  G1 X110 Y110 F6000
 
 [fan_feedback]
 fan0_pin: nozzle_mcu:PB4
@@ -787,14 +789,8 @@ current_delay_time: 2
 [delayed_gcode LOAD_SKEW]
 initial_duration: 5
 gcode:
-  {% if printer.skew_correction is not none %}
-    {% set profiles = printer.skew_correction.profiles %}
-    {% if profiles is not none and 'default' in profiles %}
-      SKEW_PROFILE LOAD=default
-    {% else %}
-      {action_respond_info("LOAD_SKEW: no 'default' skew profile saved - skipping")}
-    {% endif %}
-  {% endif %}
+  RESPOND TYPE=command MSG="LOAD_SKEW: disabled (fork does not expose skew_correction status)"
+
 
 [include guppy_cmd.cfg]
 [include guppy_update.cfg]
@@ -803,14 +799,20 @@ gcode:
 #*# <---------------------- SAVE_CONFIG ---------------------->
 #*# DO NOT EDIT THIS BLOCK OR BELOW. The contents are auto-generated.
 #*#
+#*# [prtouch default]
+#*# version = 307
+#*#
+#*# [prtouch_v2]
+#*# z_offset = 0.100
+#*#
 #*# [bed_mesh default]
 #*# version = 1
 #*# points =
-#*#  0.087562, -0.004875, -0.019969, -0.002094, 0.080156
-#*#  0.123594, 0.082469, 0.070469, 0.096125, 0.146625
-#*#  0.118260, 0.116646, 0.096437, 0.099969, 0.129813
-#*#  0.104437, 0.033000, 0.052812, 0.032927, 0.090813
-#*#  0.028906, -0.074500, -0.089719, -0.072500, 0.086102
+#*# 	  0.075719, 0.042344, 0.057406, 0.100219, 0.109656
+#*# 	  0.191031, 0.174115, 0.176781, 0.175344, 0.213574
+#*# 	  0.230625, 0.247927, 0.215698, 0.198063, 0.216406
+#*# 	  0.224479, 0.230054, 0.151125, 0.149740, 0.171688
+#*# 	  0.122187, 0.071844, 0.028531, 0.081156, 0.167545
 #*# x_count = 5
 #*# y_count = 5
 #*# mesh_x_pps = 2
