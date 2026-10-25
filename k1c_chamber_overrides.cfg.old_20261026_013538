@@ -1,0 +1,117 @@
+# =============================================================================
+# k1c_chamber_overrides.cfg
+# Creality K1C - Chamber exhaust fan hardware + macros
+#
+# REV 2026-10-25 (v13.1)
+#   * All { ... } expressions in every macro are intentionally on ONE line.
+#     v13's multi-line {action_respond_info(...)} in _K1C_SET_CHAMBER_FAN
+#     caused "EOL while scanning string literal" on this firmware. Do not
+#     re-wrap any { ... } block across lines.
+#   * _K1C_SET_CHAMBER_FAN: filament-aware exhaust target, called from
+#     START_PRINT with Orca's FILAMENT_TYPE parameter.
+#   * M141 / M191 moved here from printer.cfg.
+#
+# Hardware: exhaust fan (PC0) controlled by a thermistor (PC5) using watermark
+# control. Watermark semantics:
+#   * target_temp = T  -> fan runs when chamber > T, stops at <= T
+#   * LOW target       -> active venting
+#   * HIGH target (70) -> fan never runs (effectively OFF)
+# =============================================================================
+
+[temperature_fan chamber_fan]
+pin: PC0
+cycle_time: 0.0100
+hardware_pwm: false
+max_power: 1
+shutdown_speed: 0
+sensor_type: EPCOS 100K B57560G104F
+sensor_pin: PC5
+min_temp: 0
+max_temp: 70
+control: watermark
+max_delta: 2
+target_temp: 70.0
+max_speed: 1.0
+min_speed: 0.0
+
+# -----------------------------------------------------------------------------
+# _K1C_SET_CHAMBER_FAN - filament-aware chamber exhaust target
+#
+# Called automatically from START_PRINT. Manual use:
+#   _K1C_SET_CHAMBER_FAN FILAMENT_TYPE=ABS
+#   _K1C_SET_CHAMBER_FAN CHAMBER_TEMP=40       # explicit override
+#   _K1C_SET_CHAMBER_FAN CHAMBER_TEMP=0        # force off
+#
+# Mapping:
+#   25C -> "cool"     active venting - PLA/TPU/PVA/BVOH
+#   35C -> "moderate" vent if > 35    - PETG/PET-CF, default
+#   55C -> "warm"     chamber warms    - ABS/ASA/PC/PA/HIPS/PPS/PEI/PEEK
+#   70C -> "off"      force via CHAMBER_TEMP=0
+# -----------------------------------------------------------------------------
+[gcode_macro _K1C_SET_CHAMBER_FAN]
+description: Configure K1C chamber exhaust fan target for a given filament
+gcode:
+    {% set ftype = params.FILAMENT_TYPE|default("")|upper %}
+    {% set target = 35 %}
+    {% set mode = "moderate" %}
+    {% if ftype.startswith("ABS") or ftype.startswith("ASA") or ftype.startswith("PC") or ftype.startswith("PA") or ftype.startswith("HIPS") or ftype.startswith("PPS") or ftype.startswith("PEI") or ftype.startswith("PEEK") %}
+        {% set target = 55 %}
+        {% set mode = "warm" %}
+    {% elif ftype.startswith("PETG") or ftype.startswith("PET-CF") %}
+        {% set target = 35 %}
+        {% set mode = "moderate" %}
+    {% elif ftype.startswith("PLA") or ftype.startswith("TPU") or ftype.startswith("PVA") or ftype.startswith("BVOH") %}
+        {% set target = 25 %}
+        {% set mode = "cool" %}
+    {% endif %}
+    {% if params.CHAMBER_TEMP is defined %}
+        {% set override = params.CHAMBER_TEMP|int %}
+        {% if override <= 0 %}
+            {% set target = 70 %}
+            {% set mode = "off (override)" %}
+        {% elif override <= 70 %}
+            {% set target = override %}
+            {% set mode = "override" %}
+        {% endif %}
+    {% endif %}
+    {% set ftype_display = ftype if ftype else "unknown" %}
+    {action_respond_info("K1C chamber fan: %s (filament=%s) target=%sC" % (mode, ftype_display, target))}
+    SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber_fan TARGET={target}
+
+# -----------------------------------------------------------------------------
+# M141 - Chamber exhaust target (S0 = off, S1..S70 = watermark target)
+# M106 P1 S<n> routes here, so slicer chamber-fan commands still work.
+# -----------------------------------------------------------------------------
+[gcode_macro M141]
+description: Set chamber exhaust fan target temperature (S0 = off)
+gcode:
+    {% if 'S' in params %}
+        {% set s = params.S|int %}
+        {% if s <= 0 %}
+            SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber_fan TARGET=70
+            RESPOND TYPE=command MSG="Chamber fan: OFF"
+        {% elif s <= 70 %}
+            SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber_fan TARGET={s}
+            RESPOND TYPE=command MSG="Chamber fan target set"
+        {% else %}
+            SET_TEMPERATURE_FAN_TARGET TEMPERATURE_FAN=chamber_fan TARGET=70
+            RESPOND TYPE=command MSG="Chamber fan: OFF (clamped)"
+        {% endif %}
+    {% endif %}
+
+# -----------------------------------------------------------------------------
+# M191 - Wait for chamber to reach S target
+# -----------------------------------------------------------------------------
+[gcode_macro M191]
+description: Wait for chamber temperature
+gcode:
+    {% if 'S' in params %}
+        {% set s = params.S|float %}
+        {% if s > 0 and s <= 70 %}
+            {% set ct = printer["temperature_fan chamber_fan"].temperature|float %}
+            {% if s > ct %}
+                M140 S100
+                TEMPERATURE_WAIT SENSOR="temperature_fan chamber_fan" MINIMUM={s-1}
+            {% endif %}
+        {% endif %}
+    {% endif %}
